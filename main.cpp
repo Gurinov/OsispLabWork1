@@ -1,25 +1,30 @@
 #include <iostream>
 #include <windows.h>
 #include <cmath>
+#include <tchar.h>
 
 
 PAINTSTRUCT ps;
+OPENFILENAME FileOpenDialog;
+char szFile[MAX_PATH];
 HDC hdc;
 const int hight = 100;
 const int width = 100;
 const int speed = 15;
+HDC hdcbitmap;
+HBITMAP hbitmap;
 
 static int x = 10;
 static int y = 10;
 static double angle = 0;
-bool ispicture = false;
+bool isPicture = false;
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 BOOL isCursorInSprite(int xPos, int yPos);
 BOOL isMousePressed;
 void DrawBitmap(HDC hDC, int x, int y, HBITMAP hBitmap);
 
-void TransformSprite(HDC hdc,double angle)
+void Transform(HDC hdc, double angle)
 {
     XFORM xf;
     xf.eM11 = 1;
@@ -71,6 +76,18 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
                         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0,
                         CW_USEDEFAULT, 0, NULL, NULL, hInstance, NULL);
 
+    ZeroMemory(&FileOpenDialog, sizeof(FileOpenDialog));
+    FileOpenDialog.lStructSize = sizeof(FileOpenDialog);
+    FileOpenDialog.hwndOwner = hWnd;
+    FileOpenDialog.lpstrFile = szFile;
+    FileOpenDialog.lpstrFile[0] = '\0';
+    FileOpenDialog.nMaxFile = sizeof(szFile);
+    FileOpenDialog.lpstrFilter = _T("Images\0*.bmp;\0\0");
+    FileOpenDialog.nFilterIndex = 1;
+    FileOpenDialog.lpstrFileTitle = NULL;
+    FileOpenDialog.nMaxFileTitle = 255;
+    FileOpenDialog.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
 
@@ -85,18 +102,17 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    static HBRUSH solidBrush = CreateSolidBrush(RGB(0, 255, 0));
+    static HBRUSH solidBrush = CreateSolidBrush(RGB(0, 0, 250));
     int prevGraphicsMode;
 
     switch (message)
     {
         case WM_PAINT :
-            hdc = GetDC(hWnd);
+            hdc = BeginPaint(hWnd,&ps);
             prevGraphicsMode = SetGraphicsMode(hdc, GM_ADVANCED);
-            TransformSprite(hdc, angle);
+            Transform(hdc, angle);
 
-            long bitWidth = 0, bitHight = 0;static HBITMAP hBitmap;
-            if (!ispicture)
+            if (!isPicture)
             {
                 RECT rect;
                 rect.top = y;
@@ -105,11 +121,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 rect.bottom = y + hight;
                 FillRect(hdc, &rect, solidBrush);
             } else{
-                HDC sDC = CreateCompatibleDC(hdc);
-                HGDIOBJ prevobj = SelectObject(sDC, hBitmap);
-                StretchBlt(hdc, x, y, width, hight, sDC, 0, 0, width, hight, SRCCOPY);
-                SelectObject(sDC, prevobj);
-                DeleteDC(sDC);
+                BLENDFUNCTION bf;
+                BitBlt(hdc,x,y,width,hight,hdcbitmap,0,0,MERGECOPY);
             }
 
             ModifyWorldTransform(hdc, NULL, MWT_IDENTITY);
@@ -185,12 +198,28 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     break;
 
                 case VK_TAB:
-                    ispicture = true;
-                    InvalidateRect(hWnd, NULL, TRUE);
+                    if (GetOpenFileName(&FileOpenDialog) == TRUE)
+                    {
+                        isPicture = true;
+                        BITMAP bm;
+                        hdcbitmap = CreateCompatibleDC(GetDC(hWnd));
+                        hbitmap = (HBITMAP) LoadImage(NULL,FileOpenDialog.lpstrFile, IMAGE_BITMAP,0,0,LR_LOADFROMFILE);
+                        GetObject(hbitmap, sizeof(BITMAP),&bm);
+                        SelectObject(hdcbitmap,hbitmap);
+                        InvalidateRect(hWnd, NULL, TRUE);
+                    }
                     break;
+
+                case VK_SHIFT:
+                   isPicture = false;
+                   InvalidateRect(hWnd, NULL, TRUE);
+                    break;
+
             }
             break;
 
+        case WM_CREATE:
+            break;
         case WM_RBUTTONDOWN:
             InvalidateRect(hWnd, NULL, TRUE);
             break;
@@ -208,56 +237,6 @@ BOOL isCursorInSprite(int xPos, int yPos) {
     return (xPos >= x)&&(xPos <= x+100) && (yPos >= y)&&(yPos <= y+100);
 }
 
-void DrawBitmap(HDC hDC, int x, int y, HBITMAP hBitmap)
-{
-    HBITMAP hbm, hOldbm;
-    HDC hMemDC;
-    BITMAP bm;
-    POINT ptSize, ptOrg;
-
-    // Создаем контекст памяти, совместимый
-    // с контекстом отображения
-    hMemDC = CreateCompatibleDC(hDC);
-
-    // Выбираем изображение bitmap в контекст памяти
-    hOldbm = (HBITMAP)SelectObject(hMemDC, hBitmap);
-
-    // Если не было ошибок, продолжаем работу
-    if (hOldbm)
-    {
-        // Для контекста памяти устанавливаем тот же
-        // режим отображения, что используется в
-        // контексте отображения
-        SetMapMode(hMemDC, GetMapMode(hDC));
-
-        // Определяем размеры изображения
-        GetObject(hBitmap, sizeof(BITMAP), (LPSTR) &bm);
-
-        ptSize.x = bm.bmWidth;  // ширина
-        ptSize.y = bm.bmHeight; // высота
-
-        // Преобразуем координаты устройства в логические
-        // для устройства вывода
-        DPtoLP(hDC, &ptSize, 1);
-
-        ptOrg.x = 0;
-        ptOrg.y = 0;
-
-        // Преобразуем координаты устройства в логические
-        // для контекста памяти
-        DPtoLP(hMemDC, &ptOrg, 1);
-
-        // Рисуем изображение bitmap
-        BitBlt(hDC, x, y, ptSize.x, ptSize.y,
-               hMemDC, ptOrg.x, ptOrg.y, SRCCOPY);
-
-        // Восстанавливаем контекст памяти
-        SelectObject(hMemDC, hOldbm);
-    }
-
-    // Удаляем контекст памяти
-    DeleteDC(hMemDC);
-}
 
 
 
